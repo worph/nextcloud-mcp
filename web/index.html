@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Nextcloud MCP</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; }
+  pre.code { white-space: pre-wrap; word-break: break-all; }
+</style>
+</head>
+<body class="bg-slate-50 text-slate-900">
+<div class="max-w-4xl mx-auto p-6 space-y-6">
+
+  <header class="flex items-center justify-between">
+    <div>
+      <h1 class="text-2xl font-bold">Nextcloud MCP</h1>
+      <p class="text-sm text-slate-500">Expose your Nextcloud (Notes, Calendar, Contacts, Files, Deck, Talk, …) to LLMs via MCP</p>
+    </div>
+    <div id="status-pill" class="px-3 py-1 rounded-full text-xs font-semibold bg-slate-200 text-slate-700">…</div>
+  </header>
+
+  <!-- Setup -->
+  <section class="bg-white border border-slate-200 rounded-lg p-5 space-y-3">
+    <h2 class="text-lg font-semibold">Setup</h2>
+    <ol class="text-sm text-slate-700 space-y-2 list-decimal list-inside">
+      <li>In Nextcloud, open <b>Settings → Personal → Security → Devices &amp; sessions</b>.</li>
+      <li>Enter a device name (e.g. <code>nextcloudmcp</code>) and click <b>Create new app password</b>.</li>
+      <li>Copy the generated <b>app password</b> and paste it below with the Nextcloud URL and your username.</li>
+      <li>Click <b>Test connection</b>, then <b>Save</b>.</li>
+      <li>(Optional) Turn on <b>Auto-respond</b> to let Claude reply to your DMs and @mentions automatically.</li>
+    </ol>
+  </section>
+
+  <!-- Nextcloud connection -->
+  <section class="bg-white border border-slate-200 rounded-lg p-5 space-y-4">
+    <h2 class="text-lg font-semibold">Nextcloud Connection</h2>
+    <div class="space-y-1">
+      <label for="nc-url" class="text-sm font-medium">Nextcloud URL</label>
+      <input id="nc-url" type="text" placeholder="http://nextcloud:80 or https://cloud.example.com"
+             class="w-full text-sm px-3 py-2 border border-slate-300 rounded font-mono" />
+    </div>
+    <div class="space-y-1">
+      <label for="nc-username" class="text-sm font-medium">Username</label>
+      <input id="nc-username" type="text" autocomplete="username" placeholder="your Nextcloud username"
+             class="w-full text-sm px-3 py-2 border border-slate-300 rounded font-mono" />
+    </div>
+    <div class="space-y-1">
+      <label for="nc-app-password" class="text-sm font-medium">App Password</label>
+      <input id="nc-app-password" type="password" autocomplete="off" placeholder="paste app password here"
+             class="w-full text-sm px-3 py-2 border border-slate-300 rounded font-mono" />
+      <p class="text-xs text-slate-500">Use an <b>app password</b>, not your main login. Stored locally in the mounted <code>data/</code> volume.</p>
+    </div>
+    <div class="flex items-center gap-3 pt-2">
+      <input id="nc-semantic" type="checkbox" class="h-4 w-4" />
+      <label for="nc-semantic" class="text-sm">
+        Enable semantic search over Notes
+        <span class="text-xs text-slate-500 block">Loads ML models in the upstream — adds ~1 GB memory.</span>
+      </label>
+    </div>
+    <div class="flex items-center gap-2 pt-2">
+      <button id="btn-test" class="px-3 py-1.5 text-sm font-medium rounded bg-slate-200 text-slate-800 hover:bg-slate-300">Test connection</button>
+      <button id="btn-save" class="px-3 py-1.5 text-sm font-medium rounded bg-black text-white hover:bg-slate-800">Save</button>
+      <span id="test-result" class="text-sm"></span>
+    </div>
+  </section>
+
+  <!-- LLM Target -->
+  <section class="bg-white border border-slate-200 rounded-lg p-5 space-y-4">
+    <div class="flex items-center justify-between">
+      <h2 class="text-lg font-semibold">LLM Target <span class="text-xs text-slate-500 font-normal">(where auto-replies are forwarded)</span></h2>
+      <button id="btn-rescan" class="text-xs px-2 py-1 rounded bg-slate-200 hover:bg-slate-300">Rescan Beacon</button>
+    </div>
+    <div class="text-sm space-y-1">
+      <div><span class="text-slate-500">Mode:</span> <span id="target-mode" class="font-mono">—</span></div>
+      <div><span class="text-slate-500">Beacon:</span> <span id="target-beacon" class="font-mono">—</span></div>
+      <div><span class="text-slate-500">Tool:</span> <span id="target-tool" class="font-mono">—</span></div>
+    </div>
+    <div id="scan-result" class="text-xs text-slate-600"></div>
+    <div id="candidate-list" class="space-y-2"></div>
+    <details class="text-xs">
+      <summary class="cursor-pointer text-slate-500 hover:text-slate-700">Advanced: pin a direct URL (mode=direct)</summary>
+      <div class="pt-2 space-y-2">
+        <input id="direct-url" type="text" placeholder="http://claude-code-container:9090/mcp"
+               class="w-full text-xs px-2 py-1 border border-slate-300 rounded font-mono" />
+        <input id="direct-tool" type="text" placeholder="tool name (e.g. query_claude)"
+               class="w-full text-xs px-2 py-1 border border-slate-300 rounded font-mono" />
+        <input id="direct-token" type="password" placeholder="bearer token (optional)"
+               class="w-full text-xs px-2 py-1 border border-slate-300 rounded font-mono" />
+        <button id="btn-pin-direct" class="text-xs px-2 py-1 bg-slate-800 text-white rounded hover:bg-slate-700">Save direct target</button>
+      </div>
+    </details>
+  </section>
+
+  <!-- Auto-respond -->
+  <section class="bg-white border border-slate-200 rounded-lg p-5 space-y-4">
+    <div class="flex items-center justify-between">
+      <h2 class="text-lg font-semibold">Auto-respond <span class="text-xs text-slate-500 font-normal">(replies as <span id="watcher-self">you</span> via Claude)</span></h2>
+      <span class="text-xs px-2 py-0.5 rounded" id="watcher-status-pill">…</span>
+    </div>
+
+    <div class="flex items-center gap-4">
+      <label class="text-sm flex items-center gap-2">
+        <input id="watcher-enabled" type="checkbox" class="h-4 w-4" />
+        Enable — watch every DM and group conversation I'm in (responds to any DM or direct @<span id="watcher-self-inline">me</span> mention)
+      </label>
+    </div>
+
+    <div class="space-y-1">
+      <label for="watcher-prefix" class="text-sm font-medium">Reply prefix</label>
+      <input id="watcher-prefix" type="text" placeholder="🤖 "
+             class="w-full text-sm px-3 py-2 border border-slate-300 rounded font-mono" />
+      <p class="text-xs text-slate-500">Prepended to every AI-generated reply so it's clear you didn't type it. Empty to disable.</p>
+    </div>
+
+    <div class="flex items-center gap-2">
+      <button id="btn-save-watcher" class="text-xs px-2 py-1 bg-black text-white rounded hover:bg-slate-800">Save</button>
+      <button id="btn-rescan-watcher" class="text-xs px-2 py-1 bg-slate-200 rounded hover:bg-slate-300">Re-scan conversations</button>
+      <span id="watcher-save-result" class="text-xs"></span>
+    </div>
+
+    <div class="pt-2">
+      <div class="text-sm font-medium text-slate-700">Watching</div>
+      <div id="watched-list" class="text-xs text-slate-500 mt-1">—</div>
+    </div>
+
+    <div class="text-xs text-slate-500 pt-2 border-t border-slate-100">
+      <p>Zero server-side setup. Uses polling under your app-password — see
+      <a href="https://github.com/aptero/nextcloudmcp/blob/main/docs/design-decisions.md" class="underline">docs/design-decisions.md</a>
+      for why we don't use the Talk bot webhook.</p>
+    </div>
+  </section>
+
+  <!-- Activity -->
+  <section class="bg-white border border-slate-200 rounded-lg p-5 space-y-3">
+    <div class="flex items-center justify-between">
+      <h2 class="text-lg font-semibold">Activity <span class="text-xs text-slate-500 font-normal">(most recent events)</span></h2>
+      <span class="text-xs text-slate-500">auto-refresh 3s</span>
+    </div>
+    <div id="activity" class="space-y-1 text-xs font-mono"></div>
+  </section>
+
+  <!-- Connect an LLM client -->
+  <section class="bg-white border border-slate-200 rounded-lg p-5 space-y-4">
+    <h2 class="text-lg font-semibold">Connect an LLM Client</h2>
+    <div class="space-y-1">
+      <div class="text-sm text-slate-700 font-medium">MCP Endpoints</div>
+      <div class="flex items-center gap-2">
+        <code id="mcp-url" class="flex-1 text-xs bg-slate-100 px-3 py-2 rounded border border-slate-200 font-mono break-all"></code>
+        <button data-copy="mcp-url" class="text-xs px-2 py-2 bg-slate-200 rounded hover:bg-slate-300">Copy</button>
+      </div>
+      <div class="flex items-center gap-2">
+        <code id="talk-mcp-url" class="flex-1 text-xs bg-slate-100 px-3 py-2 rounded border border-slate-200 font-mono break-all"></code>
+        <button data-copy="talk-mcp-url" class="text-xs px-2 py-2 bg-slate-200 rounded hover:bg-slate-300">Copy</button>
+      </div>
+    </div>
+    <div class="space-y-1">
+      <div class="text-sm text-slate-700 font-medium">Claude Code (direct)</div>
+      <div class="flex items-center gap-2">
+        <code id="snippet-claude" class="flex-1 text-xs bg-slate-100 px-3 py-2 rounded border border-slate-200 font-mono break-all"></code>
+        <button data-copy="snippet-claude" class="text-xs px-2 py-2 bg-slate-200 rounded hover:bg-slate-300">Copy</button>
+      </div>
+    </div>
+    <div class="space-y-1">
+      <div class="text-sm text-slate-700 font-medium">Claude Code (via Beacon aggregator)</div>
+      <div class="flex items-center gap-2">
+        <code id="snippet-beacon" class="flex-1 text-xs bg-slate-100 px-3 py-2 rounded border border-slate-200 font-mono break-all">claude mcp add beacon --transport http http://localhost:9300/mcp/</code>
+        <button data-copy="snippet-beacon" class="text-xs px-2 py-2 bg-slate-200 rounded hover:bg-slate-300">Copy</button>
+      </div>
+    </div>
+  </section>
+
+  <div id="toast" class="fixed bottom-4 right-4 max-w-sm p-3 rounded shadow-lg text-sm hidden"></div>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>

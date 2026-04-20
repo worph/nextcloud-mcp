@@ -1,0 +1,30 @@
+{
+  "name": "nextcloud-mcp-wrapper",
+  "version": "0.1.0",
+  "description": "Wrapper around ghcr.io/cbcoutinho/nextcloud-mcp-server that adds a Web UI for credential setup and Beacon auto-discovery",
+  "type": "module",
+  "main": "dist/index.js",
+  "packageManager": "pnpm@9.15.4",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist"
+  },
+  "keywords": ["nextcloud", "mcp", "model-context-protocol", "casaos", "beacon"],
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "express": "^4.18.2",
+    "http-proxy-middleware": "^3.0.3",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
