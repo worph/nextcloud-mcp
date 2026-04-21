@@ -37,7 +37,6 @@ LLM clients (Claude Code, Claude Desktop, Cursor, …) connect to `http://<host>
 - **CasaOS / Yundera ready** — drop the compose file into `YunderaAppStore/Apps/nextcloudmcp/` and go.
 - **Beacon-discoverable** — shows up automatically in any Beacon aggregator on the same network.
 - **Single container** — the upstream Python MCP and the Node wrapper are supervised together; config persists on a mounted volume.
-- **Optional semantic search** — toggle `ENABLE_SEMANTIC_SEARCH` to enable the upstream's vector search over Notes.
 
 ## Quick Start
 
@@ -57,20 +56,22 @@ open http://localhost:9650
 
 ### Auto-respond to your Talk messages
 
-Optional: flip one toggle and Claude (via Beacon) auto-replies to your
-Nextcloud Talk DMs and `@<username>` mentions.
+**Auto-respond is on by default.** Once Nextcloud credentials are saved and
+an LLM MCP is reachable on the network, Claude (via Beacon) starts
+replying to your Nextcloud Talk DMs and `@<username>` mentions with no
+extra click-through.
 
-Setup in the Web UI's **Auto-respond** panel:
+Quick checks in the Web UI's **Auto-respond** panel:
 
-1. Make sure **Nextcloud Connection** is green (`/api/status` shows
+1. **Nextcloud Connection** is green (`/api/status` shows
    `upstreamHealthy: true`).
-2. In **LLM Target**, click **Rescan Beacon** — if an LLM MCP is on the
-   network, it auto-saves (e.g. `claude-code__query_claude`).
-3. Check **Enable — watch my DMs and @me mentions**. Optionally tweak the
-   reply prefix (defaults to `🤖 `).
-4. Click **Save**.
+2. **LLM Target** shows a tool name (e.g. `claude-code__query_claude`).
+   If it doesn't, click **Rescan Beacon** — the first matching LLM MCP is
+   auto-saved.
+3. Reply prefix defaults to `🤖 ` so AI replies stay visibly distinct.
+4. Uncheck **Enable** and hit **Save** if you want to turn auto-respond off.
 
-That's it. No `occ` command, no public URL, no HMAC — just the app-password
+No `occ` command, no public URL, no HMAC — just the app-password
 you already pasted. See
 [`docs/design-decisions.md`](./docs/design-decisions.md) (ADR-001) for why
 we chose polling over the Talk bot webhook.
@@ -137,9 +138,6 @@ The Web UI writes `data/config.json`:
     "username": "alice",
     "appPassword": "***redacted***"
   },
-  "features": {
-    "semanticSearch": false
-  },
   "server": {
     "port": 9650,
     "discoveryPort": 9099
@@ -160,7 +158,6 @@ The app-password is **never** returned by `GET /api/config` — it's masked as `
 | `NEXTCLOUD_HOST` | Optional — pre-seeds `nextcloud.url` if config is empty | — |
 | `NEXTCLOUD_USERNAME` | Optional — pre-seeds `nextcloud.username` | — |
 | `NEXTCLOUD_PASSWORD` | Optional — pre-seeds `nextcloud.appPassword` (use app-password, not login pw) | — |
-| `ENABLE_SEMANTIC_SEARCH` | Toggle upstream semantic search over Notes | `false` |
 
 Setting `NEXTCLOUD_HOST` + `NEXTCLOUD_USERNAME` + `NEXTCLOUD_PASSWORD` lets the stack come up fully configured with no UI click-through — useful for CasaOS install-tips that pass values from the parent Nextcloud app.
 

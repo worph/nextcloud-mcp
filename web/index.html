@@ -29,7 +29,7 @@
       <li>Enter a device name (e.g. <code>nextcloudmcp</code>) and click <b>Create new app password</b>.</li>
       <li>Copy the generated <b>app password</b> and paste it below with the Nextcloud URL and your username.</li>
       <li>Click <b>Test connection</b>, then <b>Save</b>.</li>
-      <li>(Optional) Turn on <b>Auto-respond</b> to let Claude reply to your DMs and @mentions automatically.</li>
+      <li><b>Auto-respond</b> is <b>on by default</b> — Claude will reply to your DMs and @mentions as soon as an LLM target is discovered. Toggle it off below if you don't want that.</li>
     </ol>
   </section>
 
@@ -51,13 +51,6 @@
       <input id="nc-app-password" type="password" autocomplete="off" placeholder="paste app password here"
              class="w-full text-sm px-3 py-2 border border-slate-300 rounded font-mono" />
       <p class="text-xs text-slate-500">Use an <b>app password</b>, not your main login. Stored locally in the mounted <code>data/</code> volume.</p>
-    </div>
-    <div class="flex items-center gap-3 pt-2">
-      <input id="nc-semantic" type="checkbox" class="h-4 w-4" />
-      <label for="nc-semantic" class="text-sm">
-        Enable semantic search over Notes
-        <span class="text-xs text-slate-500 block">Loads ML models in the upstream — adds ~1 GB memory.</span>
-      </label>
     </div>
     <div class="flex items-center gap-2 pt-2">
       <button id="btn-test" class="px-3 py-1.5 text-sm font-medium rounded bg-slate-200 text-slate-800 hover:bg-slate-300">Test connection</button>
@@ -112,6 +105,13 @@
       <input id="watcher-prefix" type="text" placeholder="🤖 "
              class="w-full text-sm px-3 py-2 border border-slate-300 rounded font-mono" />
       <p class="text-xs text-slate-500">Prepended to every AI-generated reply so it's clear you didn't type it. Empty to disable.</p>
+    </div>
+
+    <div class="space-y-1">
+      <label for="watcher-context" class="text-sm font-medium">Conversation context size</label>
+      <input id="watcher-context" type="number" min="0" max="100" step="1" placeholder="20"
+             class="w-full text-sm px-3 py-2 border border-slate-300 rounded font-mono" />
+      <p class="text-xs text-slate-500">How many prior messages are included as transcript context before the triggering message. Same value is used for DMs and group @mentions. Set to 0 to disable (fully stateless turns).</p>
     </div>
 
     <div class="flex items-center gap-2">

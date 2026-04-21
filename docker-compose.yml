@@ -19,7 +19,6 @@ services:
       # - NEXTCLOUD_HOST=http://nextcloud:80
       # - NEXTCLOUD_USERNAME=
       # - NEXTCLOUD_PASSWORD=
-      # - ENABLE_SEMANTIC_SEARCH=false
     restart: unless-stopped
     networks:
       - mcp-net

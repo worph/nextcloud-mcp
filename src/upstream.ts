@@ -12,7 +12,6 @@ export interface UpstreamEnv {
   url: string;
   username: string;
   appPassword: string;
-  semanticSearch: boolean;
   authToken: string;
 }
 
@@ -22,7 +21,6 @@ export async function writeEnv(env: UpstreamEnv): Promise<void> {
     `NEXTCLOUD_HOST=${env.url}`,
     `NEXTCLOUD_USERNAME=${env.username}`,
     `NEXTCLOUD_PASSWORD=${env.appPassword}`,
-    `ENABLE_SEMANTIC_SEARCH=${env.semanticSearch ? "true" : "false"}`,
     `AUTH_TOKEN=${env.authToken}`,
   ];
   const dir = path.dirname(ENV_PATH);

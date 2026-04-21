@@ -57,7 +57,6 @@ async function loadConfig() {
     $("#nc-app-password").placeholder = pw
       ? "app password saved — leave blank to keep"
       : "paste app password here";
-    $("#nc-semantic").checked = Boolean(currentConfig.features?.semanticSearch);
 
     // Target
     const t = currentConfig.target || {};
@@ -75,6 +74,8 @@ async function loadConfig() {
     const w = currentConfig.watcher || {};
     $("#watcher-enabled").checked = Boolean(w.enabled);
     $("#watcher-prefix").value = w.replyPrefix ?? "🤖 ";
+    $("#watcher-context").value =
+      typeof w.contextMessages === "number" ? w.contextMessages : 20;
 
     // Self label on the auto-respond header
     const self = currentConfig.nextcloud?.username || "me";
@@ -240,7 +241,6 @@ async function onSave() {
   const url = $("#nc-url").value.trim();
   const username = $("#nc-username").value.trim();
   const appPassword = $("#nc-app-password").value;
-  const semanticSearch = $("#nc-semantic").checked;
   if (!url) return toast("Nextcloud URL is required", true);
   if (!username) return toast("Username is required", true);
   try {
@@ -248,7 +248,6 @@ async function onSave() {
       method: "POST",
       body: JSON.stringify({
         nextcloud: { url, username, appPassword },
-        features: { semanticSearch },
       }),
     });
     toast("Saved — upstream restarting");
@@ -327,13 +326,15 @@ async function onPinDirect() {
 async function onSaveWatcher() {
   const enabled = $("#watcher-enabled").checked;
   const replyPrefix = $("#watcher-prefix").value;
+  const ctxRaw = Number($("#watcher-context").value);
+  const contextMessages = Number.isFinite(ctxRaw) ? Math.max(0, Math.min(100, Math.floor(ctxRaw))) : 20;
   const out = $("#watcher-save-result");
   out.textContent = "saving…";
   out.className = "text-xs text-slate-500";
   try {
     await api("/api/watcher", {
       method: "POST",
-      body: JSON.stringify({ enabled, replyPrefix }),
+      body: JSON.stringify({ enabled, replyPrefix, contextMessages }),
     });
     out.textContent = "✓ saved";
     out.className = "text-xs text-emerald-700 font-medium";

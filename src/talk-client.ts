@@ -144,6 +144,203 @@ export async function createOneToOne(
   });
 }
 
+/**
+ * Create a group (roomType=2) or public (roomType=3) conversation.
+ *
+ * - `roomName` is required for non-1-to-1 rooms.
+ * - `source` selects the invite backend: "users" (default), "groups", "circles",
+ *   or "emails". When set to "users" you may omit `invite` to create an empty
+ *   room and add participants later with `addParticipant`.
+ * - `objectType` / `objectId` let you scope a room to a resource (Deck card,
+ *   file, etc.). Leave undefined for a plain chat room.
+ */
+export async function createConversation(opts: {
+  roomType: 2 | 3;
+  roomName: string;
+  invite?: string;
+  source?: "users" | "groups" | "circles" | "emails";
+  objectType?: string;
+  objectId?: string;
+}): Promise<TalkConversation> {
+  const body: Record<string, unknown> = {
+    roomType: opts.roomType,
+    roomName: opts.roomName,
+  };
+  if (opts.invite) body.invite = opts.invite;
+  if (opts.source) body.source = opts.source;
+  if (opts.objectType) body.objectType = opts.objectType;
+  if (opts.objectId) body.objectId = opts.objectId;
+  return ocsRequest<TalkConversation>(
+    "POST",
+    "/ocs/v2.php/apps/spreed/api/v4/room",
+    body,
+  );
+}
+
+export interface TalkParticipant {
+  actorType: string; // "users", "groups", "emails", "circles", "guests", "federated_users"
+  actorId: string;
+  displayName: string;
+  participantType: number;
+  lastPing?: number;
+  inCall?: number;
+  attendeeId?: number;
+}
+
+export async function listParticipants(
+  token: string,
+  includeStatus = false,
+): Promise<TalkParticipant[]> {
+  const qs = includeStatus ? "?includeStatus=true" : "";
+  return ocsRequest<TalkParticipant[]>(
+    "GET",
+    `/ocs/v2.php/apps/spreed/api/v4/room/${encodeURIComponent(token)}/participants${qs}`,
+  );
+}
+
+/**
+ * Add a participant. `source` defaults to "users" (by Nextcloud userId). Use
+ * "groups" to pull in every member of a Nextcloud group, "emails" for email
+ * guests, "circles" for Circles/Teams, etc.
+ */
+export async function addParticipant(
+  token: string,
+  newParticipant: string,
+  source: "users" | "groups" | "circles" | "emails" | "federated_users" = "users",
+): Promise<unknown> {
+  return ocsRequest<unknown>(
+    "POST",
+    `/ocs/v2.php/apps/spreed/api/v4/room/${encodeURIComponent(token)}/participants`,
+    { newParticipant, source },
+  );
+}
+
+/**
+ * Remove a participant by `attendeeId` (from `listParticipants`). The endpoint
+ * also supports removal by actor, but attendeeId is the modern path and avoids
+ * ambiguity across backends.
+ */
+export async function removeAttendee(
+  token: string,
+  attendeeId: number,
+): Promise<unknown> {
+  const qs = new URLSearchParams({ attendeeId: String(attendeeId) });
+  return ocsRequest<unknown>(
+    "DELETE",
+    `/ocs/v2.php/apps/spreed/api/v4/room/${encodeURIComponent(token)}/attendees?${qs}`,
+  );
+}
+
+export async function renameConversation(
+  token: string,
+  roomName: string,
+): Promise<TalkConversation> {
+  return ocsRequest<TalkConversation>(
+    "PUT",
+    `/ocs/v2.php/apps/spreed/api/v4/room/${encodeURIComponent(token)}`,
+    { roomName },
+  );
+}
+
+export async function setConversationDescription(
+  token: string,
+  description: string,
+): Promise<TalkConversation> {
+  return ocsRequest<TalkConversation>(
+    "PUT",
+    `/ocs/v2.php/apps/spreed/api/v4/room/${encodeURIComponent(token)}/description`,
+    { description },
+  );
+}
+
+/**
+ * Delete a conversation. Only moderators/owners can delete group or public
+ * rooms. For 1-to-1 rooms this just hides it for the current user.
+ */
+export async function deleteConversation(token: string): Promise<unknown> {
+  return ocsRequest<unknown>(
+    "DELETE",
+    `/ocs/v2.php/apps/spreed/api/v4/room/${encodeURIComponent(token)}`,
+  );
+}
+
+/** Leave a conversation you are a participant in (does not delete for others). */
+export async function leaveConversation(token: string): Promise<unknown> {
+  return ocsRequest<unknown>(
+    "DELETE",
+    `/ocs/v2.php/apps/spreed/api/v4/room/${encodeURIComponent(token)}/participants/self`,
+  );
+}
+
+export async function setFavorite(
+  token: string,
+  favorite: boolean,
+): Promise<unknown> {
+  return ocsRequest<unknown>(
+    favorite ? "POST" : "DELETE",
+    `/ocs/v2.php/apps/spreed/api/v4/room/${encodeURIComponent(token)}/favorite`,
+  );
+}
+
+export async function setReadMarker(
+  token: string,
+  lastReadMessage?: number,
+): Promise<unknown> {
+  const body =
+    typeof lastReadMessage === "number" ? { lastReadMessage } : undefined;
+  return ocsRequest<unknown>(
+    "POST",
+    `/ocs/v2.php/apps/spreed/api/v1/chat/${encodeURIComponent(token)}/read`,
+    body,
+  );
+}
+
+export async function markUnread(token: string): Promise<unknown> {
+  return ocsRequest<unknown>(
+    "DELETE",
+    `/ocs/v2.php/apps/spreed/api/v1/chat/${encodeURIComponent(token)}/read`,
+  );
+}
+
+/**
+ * Delete (retract) a chat message. Leaves a system placeholder in the chat.
+ * Only the sender or a moderator can delete; older messages may be rejected
+ * by the server.
+ */
+export async function deleteMessage(
+  token: string,
+  messageId: number,
+): Promise<unknown> {
+  return ocsRequest<unknown>(
+    "DELETE",
+    `/ocs/v2.php/apps/spreed/api/v1/chat/${encodeURIComponent(token)}/${messageId}`,
+  );
+}
+
+export async function addReaction(
+  token: string,
+  messageId: number,
+  reaction: string,
+): Promise<unknown> {
+  return ocsRequest<unknown>(
+    "POST",
+    `/ocs/v2.php/apps/spreed/api/v1/reaction/${encodeURIComponent(token)}/${messageId}`,
+    { reaction },
+  );
+}
+
+export async function removeReaction(
+  token: string,
+  messageId: number,
+  reaction: string,
+): Promise<unknown> {
+  const qs = new URLSearchParams({ reaction });
+  return ocsRequest<unknown>(
+    "DELETE",
+    `/ocs/v2.php/apps/spreed/api/v1/reaction/${encodeURIComponent(token)}/${messageId}?${qs}`,
+  );
+}
+
 export async function sendMessage(
   token: string,
   message: string,

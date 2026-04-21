@@ -96,10 +96,6 @@ function createApiRouter(deps: ApiDependencies): Router {
           username: incoming.nextcloud.username,
           appPassword: incoming.nextcloud.appPassword ?? "",
         },
-        features: {
-          semanticSearch:
-            incoming.features?.semanticSearch ?? current.features.semanticSearch,
-        },
         target: (incoming.target ?? current.target) as TargetConfig,
         watcher: (incoming.watcher ?? current.watcher) as WatcherConfig,
         server: current.server,
@@ -286,6 +282,8 @@ function createApiRouter(deps: ApiDependencies): Router {
           incoming.longPollTimeoutSec ?? current.watcher.longPollTimeoutSec,
         suppressAfterHumanSendSec:
           incoming.suppressAfterHumanSendSec ?? current.watcher.suppressAfterHumanSendSec,
+        contextMessages:
+          incoming.contextMessages ?? current.watcher.contextMessages,
       };
       const next: Config = { ...current, watcher: merged };
       const validation = ConfigSchema.safeParse(next);

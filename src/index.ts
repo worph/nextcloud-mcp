@@ -94,7 +94,6 @@ async function main(): Promise<void> {
       url: config.nextcloud.url,
       username: config.nextcloud.username,
       appPassword: config.nextcloud.appPassword,
-      semanticSearch: config.features.semanticSearch,
       authToken: config.server.upstreamAuthToken,
     });
     await upstream.restart();
@@ -108,8 +107,7 @@ async function main(): Promise<void> {
   const upstreamInputsChanged = (prev: Config, next: Config): boolean =>
     prev.nextcloud.url !== next.nextcloud.url ||
     prev.nextcloud.username !== next.nextcloud.username ||
-    prev.nextcloud.appPassword !== next.nextcloud.appPassword ||
-    prev.features.semanticSearch !== next.features.semanticSearch;
+    prev.nextcloud.appPassword !== next.nextcloud.appPassword;
 
   const watcherInputsChanged = (prev: Config, next: Config): boolean =>
     prev.watcher.enabled !== next.watcher.enabled ||
@@ -134,7 +132,6 @@ async function main(): Promise<void> {
         url: config.nextcloud.url,
         username: config.nextcloud.username,
         appPassword: config.nextcloud.appPassword,
-        semanticSearch: config.features.semanticSearch,
         authToken: config.server.upstreamAuthToken,
       });
       await upstream.restart();

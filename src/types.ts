@@ -51,7 +51,7 @@ const TargetSchema = z
  */
 const WatcherSchema = z
   .object({
-    enabled: z.boolean().default(false),
+    enabled: z.boolean().default(true),
     /**
      * Prepended to every auto-reply so humans can tell AI answers from real
      * ones. Empty string to disable.
@@ -69,12 +69,19 @@ const WatcherSchema = z
      * chatting.
      */
     suppressAfterHumanSendSec: z.number().int().min(0).max(3600).default(60),
+    /**
+     * Number of prior messages injected as transcript context before the
+     * triggering message, so each turn doesn't feel like a goldfish. Applies
+     * to both DMs and group @mentions. 0 disables — fully stateless turns.
+     */
+    contextMessages: z.number().int().min(0).max(100).default(20),
   })
   .default({
-    enabled: false,
+    enabled: true,
     replyPrefix: "🤖 ",
     longPollTimeoutSec: 30,
     suppressAfterHumanSendSec: 60,
+    contextMessages: 20,
   });
 
 export const ConfigSchema = z.object({
@@ -83,11 +90,6 @@ export const ConfigSchema = z.object({
     username: z.string(),
     appPassword: z.string(),
   }),
-  features: z
-    .object({
-      semanticSearch: z.boolean().default(false),
-    })
-    .default({ semanticSearch: false }),
   target: TargetSchema,
   watcher: WatcherSchema,
   server: z

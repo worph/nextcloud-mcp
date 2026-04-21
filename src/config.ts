@@ -19,10 +19,6 @@ function defaultConfig(): Config {
       username: process.env.NEXTCLOUD_USERNAME ?? "",
       appPassword: process.env.NEXTCLOUD_PASSWORD ?? "",
     },
-    features: {
-      semanticSearch:
-        (process.env.ENABLE_SEMANTIC_SEARCH ?? "").toLowerCase() === "true",
-    },
     target: {
       mode: ((process.env.TARGET_MODE ?? "auto") as "auto" | "direct" | "off"),
       beaconUrl: process.env.BEACON_URL ?? "http://beacon:9300/mcp/",
@@ -33,12 +29,13 @@ function defaultConfig(): Config {
       llmToolNames: ["query_claude", "chat", "ask", "send_prompt", "llm_chat"],
     },
     watcher: {
-      enabled: (process.env.WATCHER_ENABLED ?? "").toLowerCase() === "true",
+      enabled: (process.env.WATCHER_ENABLED ?? "true").toLowerCase() === "true",
       replyPrefix: process.env.WATCHER_REPLY_PREFIX ?? "🤖 ",
       longPollTimeoutSec: Number(process.env.WATCHER_LONG_POLL_TIMEOUT_SEC ?? 30),
       suppressAfterHumanSendSec: Number(
         process.env.WATCHER_SUPPRESS_AFTER_HUMAN_SEND_SEC ?? 60,
       ),
+      contextMessages: Number(process.env.WATCHER_CONTEXT_MESSAGES ?? 20),
     },
     server: {
       port: Number(process.env.PORT ?? 9650),
@@ -105,7 +102,6 @@ export function unmaskIncoming(incoming: Config, current: Config): Config {
   if (!merged.nextcloud.appPassword || merged.nextcloud.appPassword.includes("*")) {
     merged.nextcloud.appPassword = current.nextcloud.appPassword;
   }
-  merged.features = merged.features ?? current.features;
 
   merged.target = merged.target ?? current.target;
   if (!merged.target.directAuthToken || merged.target.directAuthToken.includes("*")) {

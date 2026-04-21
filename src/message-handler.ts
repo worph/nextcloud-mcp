@@ -9,9 +9,73 @@
 import { record as recordActivity } from "./activity-log.js";
 import { loadConfig } from "./config.js";
 import { callTargetLlm, type MessageContext } from "./llm-client.js";
-import { editMessage as talkEdit, sendMessage as talkSend } from "./talk-client.js";
+import {
+  editMessage as talkEdit,
+  getMessages as talkGetMessages,
+  isOwnMessageId,
+  sendMessage as talkSend,
+  type TalkMessage,
+} from "./talk-client.js";
 
 const THINKING_PLACEHOLDER = "⏳ _Thinking…_";
+
+function formatTimestamp(unixSec: number): string {
+  const d = new Date(unixSec * 1000);
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
+async function fetchHistory(
+  conversationToken: string,
+  triggerMessageId: number,
+  limit: number,
+): Promise<TalkMessage[]> {
+  // Pull a few extra — placeholders and the trigger itself get filtered out.
+  const fetched = await talkGetMessages(conversationToken, { limit: limit + 5 });
+  const filtered = fetched.filter((m) => {
+    if (m.messageType !== "comment") return false;
+    if (m.id === triggerMessageId) return false;
+    // Our own "⏳ Thinking…" placeholders would confuse the LLM.
+    if (isOwnMessageId(m.id) && m.message.includes("⏳")) return false;
+    return true;
+  });
+  // getMessages returns newest-first; chronological is friendlier for the LLM.
+  return filtered.slice(0, limit).reverse();
+}
+
+function composePrompt(
+  ctx: MessageContext,
+  history: TalkMessage[],
+): string {
+  const hintLine = `For more context on this conversation, call the \`talk_get_messages\` tool with token \`${ctx.conversationToken}\`.`;
+
+  if (history.length === 0) {
+    return [
+      `New message in "${ctx.conversationName}" from ${ctx.actorDisplayName}:`,
+      ctx.message,
+      "",
+      "---",
+      hintLine,
+    ].join("\n");
+  }
+
+  const transcript = history
+    .map((m) => `[${formatTimestamp(m.timestamp)}] ${m.actorDisplayName}: ${m.message}`)
+    .join("\n");
+
+  return [
+    `Recent conversation in "${ctx.conversationName}" (oldest first):`,
+    transcript,
+    "",
+    "---",
+    `New message to answer (from ${ctx.actorDisplayName}):`,
+    ctx.message,
+    "",
+    "---",
+    hintLine,
+  ].join("\n");
+}
 
 export type DispatchKind = "dm_accepted" | "mention_accepted";
 
@@ -53,6 +117,26 @@ export async function handle(input: DispatchInput): Promise<void> {
     `Talk: ${kind} in ${ctx.conversationName} (${ctx.conversationToken}) from ${ctx.actorDisplayName} — forwarding to ${target.toolName} @ ${endpoint}`,
   );
 
+  // Fetch prior messages BEFORE posting the placeholder, so it doesn't appear
+  // in our own history. Best-effort — if fetching fails, fall back to the
+  // single-message prompt.
+  const contextLimit = cfg.watcher.contextMessages ?? 0;
+  let history: TalkMessage[] = [];
+  if (contextLimit > 0) {
+    try {
+      history = await fetchHistory(
+        ctx.conversationToken,
+        Number(ctx.messageId),
+        contextLimit,
+      );
+    } catch (err) {
+      console.warn(
+        `Talk: failed to fetch conversation context for ${ctx.conversationToken}:`,
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  }
+
   // Post a placeholder immediately so the user sees that the bot is working.
   let placeholderId: number | null = null;
   try {
@@ -70,14 +154,19 @@ export async function handle(input: DispatchInput): Promise<void> {
     conversationToken: ctx.conversationToken,
     conversationName: ctx.conversationName,
     actorId: ctx.actorId,
-    excerpt: `→ ${target.toolName} (mode=${target.mode})`,
+    excerpt: `→ ${target.toolName} (mode=${target.mode}, ctx=${history.length})`,
   });
+
+  const llmCtx: MessageContext = {
+    ...ctx,
+    message: composePrompt(ctx, history),
+  };
 
   const prefix = cfg.watcher.replyPrefix ?? "";
   let reply = "";
   const t0 = Date.now();
   try {
-    const result = await callTargetLlm(target, ctx);
+    const result = await callTargetLlm(target, llmCtx);
     const dt = Date.now() - t0;
     console.log(
       `Talk: LLM responded in ${dt}ms, isError=${result.isError}, len=${result.text.length}`,
