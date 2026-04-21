@@ -30,9 +30,11 @@ COPY web/ ./web/
 
 # Wrapper state lives under /app/wrapper-data (persisted via volume).
 # Do NOT use /app/data in case the upstream ever ships something there.
-RUN mkdir -p /app/wrapper-data /var/log /var/run \
- && touch /app/upstream.env \
- && chmod 600 /app/upstream.env
+# /app/wrapper-data is chmod'd world-writable so the container works under any
+# runtime UID (Yundera PCS pins `user: 1000:1000`, local dev runs as root).
+# upstream.env lives in /tmp so a non-root runtime can recreate it at startup.
+RUN mkdir -p /app/wrapper-data \
+ && chmod 777 /app/wrapper-data
 
 COPY supervisord.conf /etc/supervisord.conf
 
@@ -40,7 +42,7 @@ ENV PORT=9650 \
     UPSTREAM_PORT=8000 \
     DISCOVERY_PORT=9099 \
     CONFIG_PATH=/app/wrapper-data/config.json \
-    UPSTREAM_ENV_PATH=/app/upstream.env
+    UPSTREAM_ENV_PATH=/tmp/upstream.env
 
 EXPOSE 9650 9099/udp
 
