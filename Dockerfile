@@ -11,7 +11,11 @@ COPY src/ ./src/
 RUN pnpm run build && pnpm prune --prod
 
 # --- stage 2: final image layered on the upstream nextcloud-mcp-server ---
-FROM ghcr.io/cbcoutinho/nextcloud-mcp-server:latest
+# Pinned: `latest` is not safe to build on — 0.199.x moved the venv from
+# /app/.venv to /opt/venv, which breaks supervisord.conf. 0.72.3 is what the
+# 1.0.2 image shipped with. Bump deliberately and re-test (upstream also gained
+# its own talk_* tools, which mcp-proxy.ts shadows with ours).
+FROM ghcr.io/cbcoutinho/nextcloud-mcp-server:0.72.3
 
 USER root
 

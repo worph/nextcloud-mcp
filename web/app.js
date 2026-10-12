@@ -207,7 +207,6 @@ function escapeHtml(s) {
 function renderSnippets() {
   const origin = location.origin;
   $("#mcp-url").textContent = `${origin}/mcp`;
-  $("#talk-mcp-url").textContent = `${origin}/talk-mcp`;
   $("#snippet-claude").textContent =
     `claude mcp add-json nextcloud-mcp '{"type":"url","url":"${origin}/mcp"}'`;
 }

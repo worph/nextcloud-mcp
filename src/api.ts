@@ -46,12 +46,15 @@ export interface ApiDependencies {
 export function createApi(deps: ApiDependencies): express.Application {
   const app = express();
 
-  // Mount /mcp proxy BEFORE json body parser — proxy needs the raw stream.
-  app.use("/mcp", createMcpProxy(deps.getConfig));
+  // /mcp parses its JSON-RPC body itself (to route Talk calls and rewrite
+  // tools/list); the proxy re-serialises it upstream via fixRequestBody. The
+  // limit is generous because file writes travel inline in tool arguments.
+  app.use("/mcp", express.json({ limit: "50mb" }), createMcpProxy(deps.getConfig));
 
   app.use(express.json({ limit: "2mb" }));
 
-  // Talk MCP lives at /talk-mcp — expects a parsed JSON body.
+  // Deprecated: the Talk tools are now served on /mcp. Kept so clients
+  // configured with the old endpoint keep working.
   app.all("/talk-mcp", createTalkMcpHandler());
 
   app.use(express.static(path.join(__dirname, "../web")));

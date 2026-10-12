@@ -3,7 +3,7 @@ import { discoverServers } from "./beacon-discover.js";
 import { loadConfig, saveConfig } from "./config.js";
 import { detectLlmServer } from "./llm-detect.js";
 import { createMultiDiscoveryResponder } from "./mcp-announce.js";
-import { getTalkTools } from "./talk-mcp.js";
+import { getTalkTools, TALK_TOOL_NAMES } from "./talk-mcp.js";
 import * as upstream from "./upstream.js";
 import { fetchUpstreamTools } from "./upstream-tools.js";
 import { manager as watcherManager } from "./watcher-manager.js";
@@ -62,25 +62,53 @@ async function maybeAutoConfigureTarget(
   }
 }
 
-async function refreshToolCache(): Promise<void> {
-  for (let i = 0; i < 20; i++) {
-    if (await upstream.health()) break;
-    await new Promise((r) => setTimeout(r, 500));
-  }
-  try {
-    const full = await fetchUpstreamTools();
-    // Slim the announce payload to {name, description} — full inputSchema for
-    // 118 Nextcloud tools exceeds the 64 KB UDP datagram ceiling. Beacon
-    // fetches full schemas over HTTP when callers need them.
-    cachedTools = full.map((t) => {
-      const tool = t as { name?: string; description?: string };
-      return { name: tool.name, description: tool.description };
-    });
-    console.log(`Cached ${cachedTools.length} upstream tools for Beacon announcements`);
-  } catch (err) {
-    console.warn("Failed to fetch upstream tools for Beacon:", (err as Error).message);
-    cachedTools = [];
-  }
+const TOOL_FETCH_INITIAL_DELAY_MS = 1500;
+const TOOL_FETCH_MAX_DELAY_MS = 60_000;
+const TOOL_REFRESH_INTERVAL_MS = 5 * 60_000;
+
+// Monotonic counter: a newer refresh (credential change, periodic tick)
+// invalidates any retry loop still in flight, so a slow old fetch can never
+// overwrite a fresh result.
+let refreshGeneration = 0;
+
+/**
+ * Fetch the upstream catalog for Beacon announcements, retrying with backoff
+ * until it succeeds or a newer refresh supersedes it. The Python upstream
+ * takes ~40s to boot, so a single attempt at startup always loses the race.
+ * On failure the last good list is kept — announcing 0 tools makes Beacon
+ * drop the whole catalog until the next success.
+ */
+function refreshToolCache(): void {
+  const generation = ++refreshGeneration;
+  void (async () => {
+    let delay = TOOL_FETCH_INITIAL_DELAY_MS;
+    for (let attempt = 1; generation === refreshGeneration; attempt++) {
+      try {
+        if (!(await upstream.health())) throw new Error("upstream not ready");
+        const full = await fetchUpstreamTools();
+        if (generation !== refreshGeneration) return;
+        // Slim the announce payload to {name, description} — full inputSchema for
+        // 118 Nextcloud tools exceeds the 64 KB UDP datagram ceiling. Beacon
+        // fetches full schemas over HTTP.
+        cachedTools = full.map((t) => {
+          const tool = t as { name?: string; description?: string };
+          return { name: tool.name, description: tool.description };
+        });
+        // Same merge as /mcp's tools/list: Talk tools shadow upstream ones.
+        cachedTools = cachedTools.filter((t) => !TALK_TOOL_NAMES.has(String((t as { name?: string }).name)));
+        console.log(
+          `Cached ${cachedTools.length} upstream tools for Beacon announcements (attempt ${attempt})`,
+        );
+        return;
+      } catch (err) {
+        console.warn(
+          `Failed to fetch upstream tools for Beacon (attempt ${attempt}): ${(err as Error).message}. Retrying in ${Math.round(delay / 1000)}s.`,
+        );
+        await new Promise((r) => setTimeout(r, delay));
+        delay = Math.min(delay * 2, TOOL_FETCH_MAX_DELAY_MS);
+      }
+    }
+  })();
 }
 
 async function main(): Promise<void> {
@@ -97,10 +125,17 @@ async function main(): Promise<void> {
       authToken: config.server.upstreamAuthToken,
     });
     await upstream.restart();
-    void refreshToolCache();
+    refreshToolCache();
   } else {
     console.log("Nextcloud credentials not set yet — open the Web UI to configure.");
   }
+
+  // Periodic re-fetch catches upstream restarts and catalog changes.
+  setInterval(() => {
+    if (config.nextcloud.url && config.nextcloud.username && config.nextcloud.appPassword) {
+      refreshToolCache();
+    }
+  }, TOOL_REFRESH_INTERVAL_MS).unref();
 
   const getConfig = (): Config => config;
 
@@ -135,7 +170,7 @@ async function main(): Promise<void> {
         authToken: config.server.upstreamAuthToken,
       });
       await upstream.restart();
-      void refreshToolCache();
+      refreshToolCache();
     }
 
     if (watcherInputsChanged(prev, next)) {
@@ -158,7 +193,6 @@ async function main(): Promise<void> {
   const server = app.listen(port, () => {
     console.log(`Web UI:       http://localhost:${port}`);
     console.log(`MCP endpoint: http://localhost:${port}/mcp`);
-    console.log(`Talk MCP:     http://localhost:${port}/talk-mcp`);
 
     void maybeAutoConfigureTarget(getConfig, onConfigUpdated);
 
@@ -167,18 +201,13 @@ async function main(): Promise<void> {
         {
           name: "nextcloud-mcp",
           description:
-            "Nextcloud (Notes, Calendar, Contacts, Files, Deck, Cookbook, Tables, Sharing, News, Collectives) exposed as MCP (wraps cbcoutinho/nextcloud-mcp-server)",
-          tools: () => cachedTools,
+            "Nextcloud (Notes, Calendar, Contacts, Files, Deck, Talk, Cookbook, Tables, Sharing, News, Collectives) exposed as MCP (wraps cbcoutinho/nextcloud-mcp-server)",
+          tools: () => [
+            ...cachedTools,
+            ...getTalkTools().map((t) => ({ name: t.name, description: t.description })),
+          ],
           port,
           path: "/mcp",
-        },
-        {
-          name: "nextcloud-talk-mcp",
-          description:
-            "Nextcloud Talk (chat) exposed as MCP — send/receive messages in Nextcloud conversations",
-          tools: () => getTalkTools().map((t) => ({ name: t.name, description: t.description })),
-          port,
-          path: "/talk-mcp",
         },
       ],
       { listenPort: discoveryPort },

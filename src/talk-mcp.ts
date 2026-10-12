@@ -1,9 +1,9 @@
 /**
  * MCP server exposing Nextcloud Talk (chat) tools.
  *
- * Mounted at /talk-mcp alongside the existing /mcp proxy so Beacon can
- * discover them as a separate server (`nextcloud-talk-mcp`). Uses the
- * streamable-HTTP transport from the official MCP SDK.
+ * The tools are served on /mcp, merged into the upstream Nextcloud catalog by
+ * mcp-proxy.ts. The standalone server below stays mounted at /talk-mcp only
+ * for clients configured before the merge — deprecated, don't advertise it.
  */
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -410,249 +410,262 @@ function createTalkServer(): Server {
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
 
-  server.setRequestHandler(CallToolRequestSchema, async (req) => {
-    const { name, arguments: args = {} } = req.params;
-    const a = args as Record<string, unknown>;
-    try {
-      switch (name) {
-        case "talk_list_conversations": {
-          const rooms = await listConversations();
-          return textResult(rooms.map(summarizeConversation));
-        }
-        case "talk_find_user": {
-          const query = String(a.query ?? "");
-          const limit = Number(a.limit ?? 10);
-          if (!query) throw new Error("query is required");
-          const users = await searchUsers(query, limit);
-          return textResult(users);
-        }
-        case "talk_create_one_to_one": {
-          const userId = String(a.userId ?? "");
-          if (!userId) throw new Error("userId is required");
-          const room = await createOneToOne(userId);
-          return textResult(summarizeConversation(room));
-        }
-        case "talk_send_message": {
-          const token = String(a.token ?? "");
-          const message = String(a.message ?? "");
-          const replyTo = a.replyTo !== undefined ? Number(a.replyTo) : undefined;
-          if (!token || !message) throw new Error("token and message are required");
-          const msg = await sendMessage(token, message, replyTo);
-          return textResult({ id: msg.id, timestamp: msg.timestamp, token: msg.token });
-        }
-        case "talk_send_to_user": {
-          const userInput = String(a.user ?? "").trim();
-          const message = String(a.message ?? "");
-          if (!userInput || !message) throw new Error("user and message are required");
-
-          const matches = await searchUsers(userInput, 10);
-          // Prefer exact userId, then exact displayName, then a unique fuzzy match.
-          let resolved =
-            matches.find((m) => m.userId === userInput) ??
-            matches.find((m) => m.displayName === userInput);
-          if (!resolved) {
-            if (matches.length === 1) {
-              resolved = matches[0];
-            } else if (matches.length === 0) {
-              return {
-                content: [
-                  { type: "text", text: `No Nextcloud user matches "${userInput}".` },
-                ],
-                isError: true,
-              };
-            } else {
-              return {
-                content: [
-                  {
-                    type: "text",
-                    text:
-                      `Multiple users match "${userInput}". Re-send with an exact userId from this list:\n` +
-                      JSON.stringify(matches, null, 2),
-                  },
-                ],
-                isError: true,
-              };
-            }
-          }
-
-          const room = await createOneToOne(resolved.userId);
-          const msg = await sendMessage(room.token, message);
-          return textResult({
-            resolvedUser: resolved,
-            conversation: {
-              token: room.token,
-              type: room.type,
-              displayName: room.displayName,
-            },
-            message: { id: msg.id, timestamp: msg.timestamp },
-          });
-        }
-        case "talk_get_messages": {
-          const token = String(a.token ?? "");
-          if (!token) throw new Error("token is required");
-          const limit = a.limit !== undefined ? Number(a.limit) : undefined;
-          const lookIntoFuture = Boolean(a.lookIntoFuture);
-          const lastKnownMessageId =
-            a.lastKnownMessageId !== undefined ? Number(a.lastKnownMessageId) : undefined;
-          const msgs = await getMessages(token, { limit, lookIntoFuture, lastKnownMessageId });
-          return textResult(
-            msgs.map((m) => ({
-              id: m.id,
-              actorDisplayName: m.actorDisplayName,
-              actorId: m.actorId,
-              timestamp: m.timestamp,
-              message: m.message,
-              messageType: m.messageType,
-            })),
-          );
-        }
-        case "talk_create_group": {
-          const name = String(a.name ?? "").trim();
-          if (!name) throw new Error("name is required");
-          const isPublic = Boolean(a.public);
-          const invite = a.invite ? String(a.invite) : undefined;
-          const source = (a.source ? String(a.source) : "users") as
-            | "users"
-            | "groups"
-            | "circles"
-            | "emails";
-          const room = await createConversation({
-            roomType: isPublic ? 3 : 2,
-            roomName: name,
-            invite,
-            source,
-          });
-          return textResult(summarizeConversation(room));
-        }
-        case "talk_list_participants": {
-          const token = String(a.token ?? "");
-          if (!token) throw new Error("token is required");
-          const includeStatus = Boolean(a.includeStatus);
-          const participants = await listParticipants(token, includeStatus);
-          return textResult(
-            participants.map((p: TalkParticipant) => ({
-              actorType: p.actorType,
-              actorId: p.actorId,
-              displayName: p.displayName,
-              participantType: p.participantType,
-              attendeeId: p.attendeeId,
-            })),
-          );
-        }
-        case "talk_add_participant": {
-          const token = String(a.token ?? "");
-          const participant = String(a.participant ?? "");
-          if (!token || !participant)
-            throw new Error("token and participant are required");
-          const source = (a.source ? String(a.source) : "users") as
-            | "users"
-            | "groups"
-            | "circles"
-            | "emails"
-            | "federated_users";
-          await addParticipant(token, participant, source);
-          return textResult({ success: true, token, participant, source });
-        }
-        case "talk_remove_participant": {
-          const token = String(a.token ?? "");
-          const attendeeId = Number(a.attendeeId);
-          if (!token) throw new Error("token is required");
-          if (!Number.isFinite(attendeeId))
-            throw new Error("attendeeId must be a number");
-          await removeAttendee(token, attendeeId);
-          return textResult({ success: true, token, attendeeId });
-        }
-        case "talk_rename_conversation": {
-          const token = String(a.token ?? "");
-          const name = String(a.name ?? "").trim();
-          if (!token || !name) throw new Error("token and name are required");
-          const room = await renameConversation(token, name);
-          return textResult(summarizeConversation(room));
-        }
-        case "talk_set_description": {
-          const token = String(a.token ?? "");
-          const description = String(a.description ?? "");
-          if (!token) throw new Error("token is required");
-          const room = await setConversationDescription(token, description);
-          return textResult(summarizeConversation(room));
-        }
-        case "talk_delete_conversation": {
-          const token = String(a.token ?? "");
-          if (!token) throw new Error("token is required");
-          await deleteConversation(token);
-          return textResult({ success: true, token });
-        }
-        case "talk_leave_conversation": {
-          const token = String(a.token ?? "");
-          if (!token) throw new Error("token is required");
-          await leaveConversation(token);
-          return textResult({ success: true, token });
-        }
-        case "talk_set_favorite": {
-          const token = String(a.token ?? "");
-          if (!token) throw new Error("token is required");
-          const favorite = Boolean(a.favorite);
-          await setFavorite(token, favorite);
-          return textResult({ success: true, token, favorite });
-        }
-        case "talk_mark_read": {
-          const token = String(a.token ?? "");
-          if (!token) throw new Error("token is required");
-          const lastReadMessage =
-            a.lastReadMessage !== undefined ? Number(a.lastReadMessage) : undefined;
-          await setReadMarker(token, lastReadMessage);
-          return textResult({ success: true, token, lastReadMessage });
-        }
-        case "talk_mark_unread": {
-          const token = String(a.token ?? "");
-          if (!token) throw new Error("token is required");
-          await markUnread(token);
-          return textResult({ success: true, token });
-        }
-        case "talk_delete_message": {
-          const token = String(a.token ?? "");
-          const messageId = Number(a.messageId);
-          if (!token) throw new Error("token is required");
-          if (!Number.isFinite(messageId))
-            throw new Error("messageId must be a number");
-          await deleteMessage(token, messageId);
-          return textResult({ success: true, token, messageId });
-        }
-        case "talk_add_reaction": {
-          const token = String(a.token ?? "");
-          const messageId = Number(a.messageId);
-          const reaction = String(a.reaction ?? "");
-          if (!token || !reaction)
-            throw new Error("token and reaction are required");
-          if (!Number.isFinite(messageId))
-            throw new Error("messageId must be a number");
-          await addReaction(token, messageId, reaction);
-          return textResult({ success: true, token, messageId, reaction });
-        }
-        case "talk_remove_reaction": {
-          const token = String(a.token ?? "");
-          const messageId = Number(a.messageId);
-          const reaction = String(a.reaction ?? "");
-          if (!token || !reaction)
-            throw new Error("token and reaction are required");
-          if (!Number.isFinite(messageId))
-            throw new Error("messageId must be a number");
-          await removeReaction(token, messageId, reaction);
-          return textResult({ success: true, token, messageId, reaction });
-        }
-        default:
-          throw new Error(`Unknown tool: ${name}`);
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return {
-        content: [{ type: "text", text: `Error: ${msg}` }],
-        isError: true,
-      };
-    }
-  });
+  server.setRequestHandler(CallToolRequestSchema, async (req) =>
+    callTalkTool(req.params.name, req.params.arguments ?? {}),
+  );
 
   return server;
+}
+
+/** Names of the Talk tools — the /mcp proxy routes calls to these here. */
+export const TALK_TOOL_NAMES: ReadonlySet<string> = new Set(TOOLS.map((t) => t.name));
+
+/**
+ * Execute one Talk tool. Shared by the standalone Talk server and the /mcp
+ * proxy, which serves these tools alongside the upstream Nextcloud ones.
+ */
+export async function callTalkTool(
+  name: string,
+  args: Record<string, unknown>,
+): Promise<{ content: { type: "text"; text: string }[]; isError?: boolean }> {
+  const a = args;
+  try {
+    switch (name) {
+      case "talk_list_conversations": {
+        const rooms = await listConversations();
+        return textResult(rooms.map(summarizeConversation));
+      }
+      case "talk_find_user": {
+        const query = String(a.query ?? "");
+        const limit = Number(a.limit ?? 10);
+        if (!query) throw new Error("query is required");
+        const users = await searchUsers(query, limit);
+        return textResult(users);
+      }
+      case "talk_create_one_to_one": {
+        const userId = String(a.userId ?? "");
+        if (!userId) throw new Error("userId is required");
+        const room = await createOneToOne(userId);
+        return textResult(summarizeConversation(room));
+      }
+      case "talk_send_message": {
+        const token = String(a.token ?? "");
+        const message = String(a.message ?? "");
+        const replyTo = a.replyTo !== undefined ? Number(a.replyTo) : undefined;
+        if (!token || !message) throw new Error("token and message are required");
+        const msg = await sendMessage(token, message, replyTo);
+        return textResult({ id: msg.id, timestamp: msg.timestamp, token: msg.token });
+      }
+      case "talk_send_to_user": {
+        const userInput = String(a.user ?? "").trim();
+        const message = String(a.message ?? "");
+        if (!userInput || !message) throw new Error("user and message are required");
+
+        const matches = await searchUsers(userInput, 10);
+        // Prefer exact userId, then exact displayName, then a unique fuzzy match.
+        let resolved =
+          matches.find((m) => m.userId === userInput) ??
+          matches.find((m) => m.displayName === userInput);
+        if (!resolved) {
+          if (matches.length === 1) {
+            resolved = matches[0];
+          } else if (matches.length === 0) {
+            return {
+              content: [
+                { type: "text", text: `No Nextcloud user matches "${userInput}".` },
+              ],
+              isError: true,
+            };
+          } else {
+            return {
+              content: [
+                {
+                  type: "text",
+                  text:
+                    `Multiple users match "${userInput}". Re-send with an exact userId from this list:\n` +
+                    JSON.stringify(matches, null, 2),
+                },
+              ],
+              isError: true,
+            };
+          }
+        }
+
+        const room = await createOneToOne(resolved.userId);
+        const msg = await sendMessage(room.token, message);
+        return textResult({
+          resolvedUser: resolved,
+          conversation: {
+            token: room.token,
+            type: room.type,
+            displayName: room.displayName,
+          },
+          message: { id: msg.id, timestamp: msg.timestamp },
+        });
+      }
+      case "talk_get_messages": {
+        const token = String(a.token ?? "");
+        if (!token) throw new Error("token is required");
+        const limit = a.limit !== undefined ? Number(a.limit) : undefined;
+        const lookIntoFuture = Boolean(a.lookIntoFuture);
+        const lastKnownMessageId =
+          a.lastKnownMessageId !== undefined ? Number(a.lastKnownMessageId) : undefined;
+        const msgs = await getMessages(token, { limit, lookIntoFuture, lastKnownMessageId });
+        return textResult(
+          msgs.map((m) => ({
+            id: m.id,
+            actorDisplayName: m.actorDisplayName,
+            actorId: m.actorId,
+            timestamp: m.timestamp,
+            message: m.message,
+            messageType: m.messageType,
+          })),
+        );
+      }
+      case "talk_create_group": {
+        const name = String(a.name ?? "").trim();
+        if (!name) throw new Error("name is required");
+        const isPublic = Boolean(a.public);
+        const invite = a.invite ? String(a.invite) : undefined;
+        const source = (a.source ? String(a.source) : "users") as
+          | "users"
+          | "groups"
+          | "circles"
+          | "emails";
+        const room = await createConversation({
+          roomType: isPublic ? 3 : 2,
+          roomName: name,
+          invite,
+          source,
+        });
+        return textResult(summarizeConversation(room));
+      }
+      case "talk_list_participants": {
+        const token = String(a.token ?? "");
+        if (!token) throw new Error("token is required");
+        const includeStatus = Boolean(a.includeStatus);
+        const participants = await listParticipants(token, includeStatus);
+        return textResult(
+          participants.map((p: TalkParticipant) => ({
+            actorType: p.actorType,
+            actorId: p.actorId,
+            displayName: p.displayName,
+            participantType: p.participantType,
+            attendeeId: p.attendeeId,
+          })),
+        );
+      }
+      case "talk_add_participant": {
+        const token = String(a.token ?? "");
+        const participant = String(a.participant ?? "");
+        if (!token || !participant)
+          throw new Error("token and participant are required");
+        const source = (a.source ? String(a.source) : "users") as
+          | "users"
+          | "groups"
+          | "circles"
+          | "emails"
+          | "federated_users";
+        await addParticipant(token, participant, source);
+        return textResult({ success: true, token, participant, source });
+      }
+      case "talk_remove_participant": {
+        const token = String(a.token ?? "");
+        const attendeeId = Number(a.attendeeId);
+        if (!token) throw new Error("token is required");
+        if (!Number.isFinite(attendeeId))
+          throw new Error("attendeeId must be a number");
+        await removeAttendee(token, attendeeId);
+        return textResult({ success: true, token, attendeeId });
+      }
+      case "talk_rename_conversation": {
+        const token = String(a.token ?? "");
+        const name = String(a.name ?? "").trim();
+        if (!token || !name) throw new Error("token and name are required");
+        const room = await renameConversation(token, name);
+        return textResult(summarizeConversation(room));
+      }
+      case "talk_set_description": {
+        const token = String(a.token ?? "");
+        const description = String(a.description ?? "");
+        if (!token) throw new Error("token is required");
+        const room = await setConversationDescription(token, description);
+        return textResult(summarizeConversation(room));
+      }
+      case "talk_delete_conversation": {
+        const token = String(a.token ?? "");
+        if (!token) throw new Error("token is required");
+        await deleteConversation(token);
+        return textResult({ success: true, token });
+      }
+      case "talk_leave_conversation": {
+        const token = String(a.token ?? "");
+        if (!token) throw new Error("token is required");
+        await leaveConversation(token);
+        return textResult({ success: true, token });
+      }
+      case "talk_set_favorite": {
+        const token = String(a.token ?? "");
+        if (!token) throw new Error("token is required");
+        const favorite = Boolean(a.favorite);
+        await setFavorite(token, favorite);
+        return textResult({ success: true, token, favorite });
+      }
+      case "talk_mark_read": {
+        const token = String(a.token ?? "");
+        if (!token) throw new Error("token is required");
+        const lastReadMessage =
+          a.lastReadMessage !== undefined ? Number(a.lastReadMessage) : undefined;
+        await setReadMarker(token, lastReadMessage);
+        return textResult({ success: true, token, lastReadMessage });
+      }
+      case "talk_mark_unread": {
+        const token = String(a.token ?? "");
+        if (!token) throw new Error("token is required");
+        await markUnread(token);
+        return textResult({ success: true, token });
+      }
+      case "talk_delete_message": {
+        const token = String(a.token ?? "");
+        const messageId = Number(a.messageId);
+        if (!token) throw new Error("token is required");
+        if (!Number.isFinite(messageId))
+          throw new Error("messageId must be a number");
+        await deleteMessage(token, messageId);
+        return textResult({ success: true, token, messageId });
+      }
+      case "talk_add_reaction": {
+        const token = String(a.token ?? "");
+        const messageId = Number(a.messageId);
+        const reaction = String(a.reaction ?? "");
+        if (!token || !reaction)
+          throw new Error("token and reaction are required");
+        if (!Number.isFinite(messageId))
+          throw new Error("messageId must be a number");
+        await addReaction(token, messageId, reaction);
+        return textResult({ success: true, token, messageId, reaction });
+      }
+      case "talk_remove_reaction": {
+        const token = String(a.token ?? "");
+        const messageId = Number(a.messageId);
+        const reaction = String(a.reaction ?? "");
+        if (!token || !reaction)
+          throw new Error("token and reaction are required");
+        if (!Number.isFinite(messageId))
+          throw new Error("messageId must be a number");
+        await removeReaction(token, messageId, reaction);
+        return textResult({ success: true, token, messageId, reaction });
+      }
+      default:
+        throw new Error(`Unknown tool: ${name}`);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return {
+      content: [{ type: "text", text: `Error: ${msg}` }],
+      isError: true,
+    };
+  }
 }
 
 interface SessionEntry {
