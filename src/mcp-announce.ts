@@ -4,6 +4,29 @@
  */
 import * as dgram from "dgram";
 
+// Ack mode: when a discovery request carries `ack`, reply with 8 bytes —
+// "BCNA" + the FNV-1a 32-bit hash of the manifest, big-endian — and send the
+// manifest itself only when Beacon asks for it 1:1 with
+// {"type":"manifest","rev":"<the hash, 8 hex>"} — one ack per hosted server,
+// so the hash is what tells Beacon which manifest to ask for.
+// Full manifests answered to a broadcast all land on Beacon at once and
+// overflow its socket buffer; an ack never can. Requests without `ack` (an
+// older Beacon) still get the full manifest. See beacon/sdk/node/mcp-announce.js.
+const ACK_MAGIC = Buffer.from("BCNA");
+
+function fnv1a32(buf: Buffer): number {
+  let h = 0x811c9dc5;
+  for (const b of buf) h = Math.imul(h ^ b, 0x01000193) >>> 0;
+  return h;
+}
+
+function ackFor(manifest: string): Buffer {
+  const ack = Buffer.alloc(8);
+  ACK_MAGIC.copy(ack, 0);
+  ack.writeUInt32BE(fnv1a32(Buffer.from(manifest)), 4);
+  return ack;
+}
+
 export interface Announcement {
   name: string;
   description: string;
@@ -50,12 +73,18 @@ export function createMultiDiscoveryResponder(
   socket.on("message", (data, rinfo) => {
     try {
       const msg = JSON.parse(data.toString());
-      if (msg.type === "discovery") {
+      const manifests = announcements.map(manifestFor);
+      if (msg.type === "manifest") {
+        for (const manifest of manifests) {
+          const rev = ackFor(manifest).readUInt32BE(4).toString(16).padStart(8, "0");
+          if (!msg.rev || msg.rev === rev) socket.send(manifest, rinfo.port, rinfo.address);
+        }
+      } else if (msg.type === "discovery") {
         console.log(
-          `Discovery request from ${rinfo.address}:${rinfo.port}, announcing ${announcements.length} server(s)`,
+          `Discovery request from ${rinfo.address}:${rinfo.port}, ${msg.ack ? "acking" : "announcing"} ${announcements.length} server(s)`,
         );
-        for (const a of announcements) {
-          socket.send(manifestFor(a), rinfo.port, rinfo.address);
+        for (const manifest of manifests) {
+          socket.send(msg.ack ? ackFor(manifest) : manifest, rinfo.port, rinfo.address);
         }
       }
     } catch {
